@@ -3,7 +3,7 @@ import sqlite3
 import os
 from werkzeug.security import generate_password_hash,check_password_hash
 from flask_jwt_extended  import  JWTManager,create_access_token,jwt_required,get_jwt_identity
-from datetime import timedelta
+from datetime import timedelta,datetime
 import random
 import  string
 
@@ -85,6 +85,7 @@ def create_tables():
 def get_verification_code():
     code = generate_verification_code()
     session['verification_code'] = code
+    session['verification_code_time'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     return jsonify({'verification_code': code}), 200
 
 
@@ -107,6 +108,15 @@ def register():
 
         # 验证验证码""
         stored_code = session.get('verification_code')
+        stored_code_time_str = session.get('verification_code_time')
+        if not stored_code or not stored_code_time_str:
+            return jsonify({'message': 'Invalid verification code'}), 400
+        stored_code_time = datetime.strptime(stored_code_time_str, '%Y-%m-%d %H:%M:%S')
+        current_time = datetime.now()
+
+        if (current_time - stored_code_time) > timedelta(minutes=5):
+            return jsonify({'message': 'Verification code has expired'}), 400
+
         if stored_code != verification_code:
             return jsonify({'message': 'Invalid verification code'}), 400
 
