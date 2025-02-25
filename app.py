@@ -120,6 +120,12 @@ def register():
         if stored_code != verification_code:
             return jsonify({'message': 'Invalid verification code'}), 400
 
+        # 删除验证码，确保只能使用一次
+        session.pop('verification_code', None)
+        session.pop('verification_code_time', None)
+
+
+
         with sqlite3.connect(DATABASE) as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT * FROM users WHERE username=? OR  email = ?", (username,email))
@@ -133,6 +139,7 @@ def register():
         cursor.execute("INSERT INTO users (username, password, email) VALUES (?, ?, ?)",
                        (username, hashed_password, email))
         conn.commit()
+
         return jsonify({'message': 'Registration successful'}), 200
     except Exception as e:
         app.logger.error(f"An error occurred: {e}")
