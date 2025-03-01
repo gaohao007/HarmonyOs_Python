@@ -8,12 +8,6 @@ import random
 import  string
 
 
-import smtplib
-from email.mime.text import MIMEText
-
-
-from werkzeug.utils import secure_filename
-
 app = Flask(__name__)
 
 # 配置JWT 秘钥
@@ -57,6 +51,15 @@ def init_db():
                  ''')
 
            # SPU表（标准产品单元）
+           # 创建SPU表结构，包含以下字段：
+           # - id: 自增主键
+           # - name: 产品名称（非空约束）
+           # - description: 产品描述
+           # - category_id: 关联分类表的分类ID（外键约束）
+           # - main_image: 主图存储路径
+           # - detail_images: 详情图路径列表（以特定格式存储）
+           # - created_at: 记录创建时间（自动填充时间戳）
+           # 外键约束确保category_id必须存在于categories表的id字段
            cursor.execute('''
                         CREATE TABLE IF NOT EXISTS spu (
                             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -70,70 +73,130 @@ def init_db():
                         )
                     ''')
 
-           # SKU表（库存单元）
+           # 创建SKU数据表，用于存储商品库存单位信息
+           # 表结构说明：
+           #   id: 主键，自增唯一标识
+           #   spu_id: 关联的SPU商品ID，不可为空
+           #   price: 商品价格，保留两位小数
+           #   stock: 库存数量
+           #   combination: 规格组合值（如颜色+尺寸），作为唯一约束组成部分
+           #   image: 商品展示图路径（可选）
+           #   status: 商品状态，默认1表示可用
+           # 约束说明：
+           #   唯一约束：同一SPU下不能有重复规格组合
+           #   外键约束：spu_id关联SPU表的id字段
            cursor.execute('''
-                        CREATE TABLE IF NOT EXISTS sku (
-                            id INTEGER PRIMARY KEY AUTOINCREMENT,
-                            spu_id INTEGER NOT NULL,
-                            price DECIMAL(10,2) NOT NULL,
-                            stock INTEGER NOT NULL,
-                            attrs TEXT, 
-                            image TEXT,
-                            status INTEGER DEFAULT 1,
-                            FOREIGN KEY (spu_id) REFERENCES spu(id)
-                        )
-                    ''')
+               CREATE TABLE IF NOT EXISTS sku (
+                   id INTEGER PRIMARY KEY AUTOINCREMENT,
+                   spu_id INTEGER NOT NULL,
+                   price DECIMAL(10,2) NOT NULL,
+                   stock INTEGER NOT NULL,
+                   combination TEXT NOT NULL,
+                   image TEXT,
+                   status INTEGER DEFAULT 1,
+                   UNIQUE(spu_id, combination), 
+                   FOREIGN KEY (spu_id) REFERENCES spu(id)
+               )
+           ''')
 
            # 商品属性表
+          # 创建商品属性表（attribute），
+          #  用于存储商品属性信息  参数: cursor: 数据库游标对象，用于执行SQL语句  表结构说明:
+          #  1. id - 主键，自增长
+          #  2. name - 属性名称，非空
+          #  3. input_type - 输入类型，整型，取值范围为1、2、3
+          #  4. is_required - 是否必填，默认0（非必填）
+          #  5. category_id - 所属分类ID，外键关联categories表
+          #  6. sort_order - 排序序号，默认0
+          #  7. is_filterable - 是否可筛选，默认0（不可筛选）
            cursor.execute('''
-               CREATE TABLE IF NOT EXISTS attributes (
+               CREATE TABLE IF NOT EXISTS attribute (
                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                   name TEXT NOT NULL UNIQUE, 
-                   select_type INTEGER DEFAULT 1 
+                   name TEXT NOT NULL,
+                   input_type INTEGER NOT NULL CHECK(input_type IN (1,2,3)), 
+                   is_required INTEGER DEFAULT 0,
+                   category_id INTEGER,
+                   sort_order INTEGER DEFAULT 0,
+                   is_filterable INTEGER DEFAULT 0,
+                   FOREIGN KEY (category_id) REFERENCES categories(id)
+               )
+           ''')
+
+
+           # 创建商品属性值表（attribute_value）
+           # 表结构说明：
+           #   id - 主键，自增长整数
+           #   attribute_id - 关联属性表的外键，非空
+           #   value - 属性值文本，非空
+           #   image_url - 可选图片链接字段
+           #   sort_order - 排序序号，默认值为0
+           # 外键约束：attribute_id字段关联attribute表的id字段
+
+           cursor.execute('''
+               CREATE TABLE IF NOT EXISTS attribute_value (
+                   id INTEGER PRIMARY KEY AUTOINCREMENT,
+                   attribute_id INTEGER NOT NULL,
+                   value TEXT NOT NULL,
+                   image_url TEXT,
+                   sort_order INTEGER DEFAULT 0,
+                   FOREIGN KEY (attribute_id) REFERENCES attribute(id)
                )
            ''')
 
 
 
            # SPU-属性关联表
+           #
+           #创建SPU属性关联表，用于存储商品属性与SPU的关联关系
+           #    表结构说明：
+           #      - spu_id: 关联的SPU ID，外键引用spu表的id
+           #       attribute_id: 属性ID，外键引用attribute表的id
+           #      - value: 属性值文本内容
+           #      - value_ids: 预定义属性值ID列表（JSON格式存储）
+           #       - is_custom: 是否为自定义属性（0-预定义属性 1-自定义属性）
+           #  外键约束确保数据完整性：
+           #    - spU_id必须存在于spu表
+           #   - attribute_id必须存在于attribute表
+           #
+
+
            cursor.execute('''
-               CREATE TABLE IF NOT EXISTS spu_attribute (
-                   spu_id INTEGER,
-                   attribute_id INTEGER,
-                   PRIMARY KEY (spu_id, attribute_id)
+               CREATE TABLE IF NOT EXISTS spu_attribute_value (
+                   spu_id INTEGER NOT NULL,
+                   attribute_id INTEGER NOT NULL,
+                   value TEXT,
+                   value_ids TEXT,
+                   is_custom INTEGER DEFAULT 0,
+                   FOREIGN KEY (spu_id) REFERENCES spu(id),
+                   FOREIGN KEY (attribute_id) REFERENCES attribute(id)
                )
            ''')
 
-           #轮播图片
+           # 轮播图片表
            cursor.execute('''
-                         CREATE TABLE IF NOT EXISTS carousel (
-                             id INTEGER PRIMARY KEY AUTOINCREMENT,
-                             image_url TEXT NOT NULL,
-                             title TEXT,
-                             description TEXT
-                         )
-                     ''')
+                      CREATE TABLE IF NOT EXISTS carousel (
+                          id INTEGER PRIMARY KEY AUTOINCREMENT,
+                          image_url TEXT NOT NULL,
+                          title TEXT,
+                          description TEXT
+                      )
+                  ''')
+
+           # 插入模拟数据到carousel表
+           cursor.execute('''
+                      SELECT COUNT(*) FROM carousel
+                  ''')
+           count = cursor.fetchone()[0]
+           if count == 0:
+               cursor.execute('''
+                          INSERT INTO carousel (image_url, title, description) VALUES
+                          ('static/images/carousel/lunbotu_1.jpg', '灵感穿搭', '灵感穿搭1折起'),
+                          ('static/images/carousel/carsoul_2.jpg', '神仙水', '神仙水买230ml至高享390ml'),
+                          ('static/images/carousel/carousol_3.jpg', '3·8换新节', '3·8换新节')
+                      ''')
+
            conn.commit()
 
-
-def add_images_to_carousel():
-    image_folder = os.path.join(os.path.dirname(__file__),'static ','images')
-    if not os.path.exists(image_folder):
-        os.makedirs(image_folder)
-        print(f'Created image folder: {image_folder}')
-        return
-
-    with sqlite3.connect(DATABASE) as conn:
-        cursor = conn.cursor()
-        for filename in os.listdir(image_folder):
-            if filename.endswith(('.jpg', '.jpeg', '.png', '.gif')):
-                image_path = os.path.join('static ','images', filename)
-                title =os.patah.splitext(filename)[0]
-                description = f'Description for {title}'
-                cursor.execute("INSERT INTO carousel (image_url, title, description) VALUES (?, ?, ?)",
-                                (image_path, title, description))
-                conn.commit()
-                print(f'Added image: {filename}')
 
 
 
@@ -149,6 +212,44 @@ def get_verification_code():
     session['verification_code'] = code
     session['verification_code_time'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     return jsonify({'verification_code': code}), 200
+
+
+
+@app.route('/api/carousel', methods=['GET'])
+def get_carousel():
+    try:
+        with sqlite3.connect(DATABASE) as conn:
+            conn.row_factory = sqlite3.Row  # 启用行转字典功能
+            cursor = conn.cursor()
+
+            # 查询所有有效的轮播图数据，按id升序排列
+            cursor.execute('''
+                   SELECT id, image_url, title, description 
+                   FROM carousel 
+                   ORDER BY id ASC
+               ''')
+            carousel_data = [dict(row) for row in cursor.fetchall()]
+
+            return jsonify({
+                "code": 200,
+                "data": carousel_data,
+                "message": "Success"
+            }), 200
+
+    except sqlite3.Error as e:
+        app.logger.error(f"数据库查询失败: {str(e)}")
+        return jsonify({
+            "code": 500,
+            "data": None,
+            "message": "数据库操作失败"
+        }), 500
+    except Exception as e:
+        app.logger.error(f"系统异常: {str(e)}")
+        return jsonify({
+            "code": 500,
+            "data": None,
+            "message": "服务器内部错误"
+        }), 500
 
 
 
