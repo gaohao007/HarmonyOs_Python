@@ -7,6 +7,13 @@ from datetime import timedelta,datetime
 import random
 import  string
 
+
+import smtplib
+from email.mime.text import MIMEText
+
+
+from werkzeug.utils import secure_filename
+
 app = Flask(__name__)
 
 # 配置JWT 秘钥
@@ -16,23 +23,19 @@ jwt = JWTManager(app)
 
 # 设置session密钥
 app.secret_key = 'your-code-key'
+
+
 def generate_verification_code():
-    return ''.join(random.choices(string.digits, k=4))
-
-
-
+    return ''.join(random.choices(string.digits, k=6))
 
 #配置数据库
 DATABASE = 'database.db'
 def init_db():
-   if not os.path.exists(DATABASE):
+
        # 链接数据库db = SQLite3
        with sqlite3.connect(DATABASE) as conn:
            cursor = conn.cursor()
            #用户
-           cursor.execute("""
-               CREATED DATABASE
-              """)
            cursor.execute('''
                   CREATE TABLE IF NOT EXISTS users (
                       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -41,6 +44,65 @@ def init_db():
                       email TEXT NOT NULL
                   )
               ''')
+
+           # 商品分类表   #自增主键id、分类名称name、图片路径image、父分类id（默认0实现层级结构）和排序序号（默认0控制显示顺序）
+           cursor.execute('''
+                     CREATE TABLE IF NOT EXISTS categories (
+                         id INTEGER PRIMARY KEY AUTOINCREMENT,
+                         name TEXT NOT NULL,
+                         image TEXT ,
+                         parent_id INTEGER DEFAULT 0,
+                         sort_order INTEGER DEFAULT 0  
+                     )
+                 ''')
+
+           # SPU表（标准产品单元）
+           cursor.execute('''
+                        CREATE TABLE IF NOT EXISTS spu (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            name TEXT NOT NULL,
+                            description TEXT,
+                            category_id INTEGER,
+                            main_image TEXT,
+                            detail_images TEXT,  
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                            FOREIGN KEY (category_id) REFERENCES categories(id)
+                        )
+                    ''')
+
+           # SKU表（库存单元）
+           cursor.execute('''
+                        CREATE TABLE IF NOT EXISTS sku (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            spu_id INTEGER NOT NULL,
+                            price DECIMAL(10,2) NOT NULL,
+                            stock INTEGER NOT NULL,
+                            attrs TEXT, 
+                            image TEXT,
+                            status INTEGER DEFAULT 1,
+                            FOREIGN KEY (spu_id) REFERENCES spu(id)
+                        )
+                    ''')
+
+           # 商品属性表
+           cursor.execute('''
+               CREATE TABLE IF NOT EXISTS attributes (
+                   id INTEGER PRIMARY KEY AUTOINCREMENT,
+                   name TEXT NOT NULL UNIQUE, 
+                   select_type INTEGER DEFAULT 1 
+               )
+           ''')
+
+
+
+           # SPU-属性关联表
+           cursor.execute('''
+               CREATE TABLE IF NOT EXISTS spu_attribute (
+                   spu_id INTEGER,
+                   attribute_id INTEGER,
+                   PRIMARY KEY (spu_id, attribute_id)
+               )
+           ''')
 
            #轮播图片
            cursor.execute('''
@@ -173,6 +235,7 @@ def login():
         app.logger.error(f"An error occurred: {e}")
         return jsonify({'message': 'Internal Server Error'}), 500
 
+
 @app.route("/protected",methods=["GET"])
 @jwt_required()
 def protected():
@@ -184,6 +247,83 @@ def protected():
         app.logger.error(f"An error occurred: {e}")
         return jsonify({'message': 'Internal Server Error'}), 500
 
+
+@app.route('/api/categories', methods=['GET'])
+def get_categories():
+    try:
+        with sqlite3.connect(DATABASE) as conn:
+            conn.row_factory = sqlite3.Row  # 将结果转为字典格式
+            cursor = conn.cursor()
+
+            # 获取所有分类
+            cursor.execute('''
+                SELECT id, name, image, parent_id, sort_order 
+                FROM categories 
+                ORDER BY sort_order ASC
+            ''')
+            categories = [dict(row) for row in cursor.fetchall()]
+
+            # 构建树形结构
+            def build_tree(parent_id=0):
+                return [
+                    {
+                        **category,
+                        "children": build_tree(category['id'])
+                    }
+                    for category in categories
+                    if category['parent_id'] == parent_id
+                ]
+
+            return jsonify({
+                "code": 200,
+                "data": build_tree(),
+                "message": "Success"
+            })
+
+    except Exception as e:
+        app.logger.error(f"获取分类失败: {str(e)}")
+        return jsonify({
+            "code": 500,
+            "data": None,
+            "message": "服务器内部错误"
+        }), 500
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 @app.route('/')
 def hello_world():  # put application's code here
     return 'Hello World!'
@@ -191,3 +331,30 @@ def hello_world():  # put application's code here
 
 if __name__ == '__main__':
     app.run(debug=True)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

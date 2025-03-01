@@ -1,0 +1,27 @@
+<!-- templates/add_category.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>添加商品类别</title>
+</head>
+<body>
+    <h1>添加商品类别</h1>
+    <form action="/api/categories" method="post">
+        <label for="name">类别名称:</label>
+        <input type="text" id="name" name="name" required><br><br>
+
+        <label for="image">图片路径:</label>
+        <input type="text" id="image" name="image" required><br><br>
+
+        <label for="parent_id">父级ID:</label>
+        <input type="number" id="parent_id" name="parent_id" value="0"><br><br>
+
+        <label for="sort_order">排序:</label>
+        <input type="number" id="sort_order" name="sort_order" value="0"><br><br>
+
+        <input type="submit" value="添加">
+    </form>
+</body>
+</html>
