@@ -39,7 +39,11 @@ def init_db():
                   )
               ''')
 
-           # 商品分类表   #自增主键id、分类名称name、图片路径image、父分类id（默认0实现层级结构）和排序序号（默认0控制显示顺序）
+           # 商品分类表
+           # #自增主键id、
+           # 分类名称name、
+           # 图片路径image、
+           # 父分类id（默认0实现层级结构）和排序序号（默认0控制显示顺序）
            cursor.execute('''
                      CREATE TABLE IF NOT EXISTS categories (
                          id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -73,6 +77,24 @@ def init_db():
                         )
                     ''')
 
+           # 插入示例SPU数据
+           cursor.execute('''
+                      SELECT COUNT(*) FROM spu
+                  ''')
+           count = cursor.fetchone()[0]
+           if count == 0:
+               cursor.execute('''
+                          INSERT INTO spu (name, description, category_id, main_image, detail_images) VALUES
+                          ('GXG', '春季热卖GXG男装黑色连帽户外夹克男机能运动夹克休闲外套', 1, 'static/images/nanzhuang/man_1_1.jpg', '["static/images/nanzhuang/man_1_1.jpg", "static/images/nanzhuang/man_1_2.jpg","static/images/nanzhuang/man_1_3.jpg","static/images/nanzhuang/man_1_4.jpg","static/images/nanzhuang/man_1_5.jpg","static/images/nanzhuang/man_1_6.jpg"]'),
+                          ('Reshake', '潮牌衬衫男士春夏长袖男装舒适百搭休闲痞帅宽松青少年男装衬衣男', 1, 'static/images/nanzhuang/man_2_1.jpg', '["static/images/nanzhuang/man_2_1.jpg", "static/images/nanzhuang/man_2_2.jpg","static/images/nanzhuang/man_2_3.jpg","static/images/nanzhuang/man_2_4.jpg","static/images/nanzhuang/man_2_5.jpg"]'),
+                          ('马克华菲', '【后背时尚印花】春秋休闲工装翻领外套字母棒球男士复古夹克', 1, 'static/images/nanzhuang/man_3_1.jpg', '["static/images/nanzhuang/man_3_1.jpg", "static/images/nanzhuang/man_3_2.jpg","static/images/nanzhuang/man_3_3.jpg","static/images/nanzhuang/man_3_4.jpg","static/images/nanzhuang/man_3_5.jpg","static/images/nanzhuang/man_3_6.jpg"]'),
+                          ('七匹狼', '春季时尚休闲舒适亲肤经典狼标刺绣男式卫衣', 1, 'static/images/nanzhuang/man_4_1.jpg', '["static/images/nanzhuang/man_4_1.jpg", "static/images/nanzhuang/man_4_2.jpg","static/images/nanzhuang/man_4_3.jpg","static/images/nanzhuang/man_4_4.jpg","static/images/nanzhuang/man_4_5.jpg","static/images/nanzhuang/man_4_6.jpg","static/images/nanzhuang/man_4_7.jpg","static/images/nanzhuang/man_4_8.jpg"]'),
+                          ('URBAN REVIVO', 'UR秋季复古缝线条纹多口袋牛仔外套UML830009', 1, 'static/images/nanzhuang/man_5_1.jpg', '["static/images/nanzhuang/man_5_1.jpg", "static/images/nanzhuang/man_5_2.jpg","static/images/nanzhuang/man_5_3.jpg","static/images/nanzhuang/man_5_4.jpg"]'),
+                          ('梦特娇', '【棉混纺&亲肤舒适】春季男士针织衫亲肤打底衫MTG', 1, 'static/images/nanzhuang/man_6_1.jpg', '["static/images/nanzhuang/man_6_1.jpg", "static/images/nanzhuang/man_6_2.jpg","static/images/nanzhuang/man_6_3.jpg","static/images/nanzhuang/man_6_4.jpg","static/images/nanzhuang/man_6_5.jpg","static/images/nanzhuang/man_6_6.jpg","static/images/nanzhuang/man_6_7.jpg","static/images/nanzhuang/man_6_8.jpg","static/images/nanzhuang/man_6_9.jpg","static/images/nanzhuang/man_6_10.jpg"]'),
+                          ('梦特娇', '【立体华夫格&棉柔舒适】25春男式半高领针织提花开衫百搭外套', 1, 'static/images/nanzhuang/man_7_1.jpg', '["static/images/nanzhuang/man_7_1.jpg", "static/images/nanzhuang/man_7_2.jpg","static/images/nanzhuang/man_7_3.jpg","static/images/nanzhuang/man_7_4.jpg","static/images/nanzhuang/man_7_5.jpg","static/images/nanzhuang/man_7_6.jpg","static/images/nanzhuang/man_7_7.jpg","static/images/nanzhuang/man_7_8.jpg","static/images/nanzhuang/man_7_9.jpg","static/images/nanzhuang/man_7_10.jpg","static/images/nanzhuang/man_7_11.jpg","static/images/nanzhuang/man_7_12.jpg"]')
+                        ''')
+
+
            # 创建SKU数据表，用于存储商品库存单位信息
            # 表结构说明：
            #   id: 主键，自增唯一标识
@@ -99,78 +121,54 @@ def init_db():
                )
            ''')
 
-           # 商品属性表
-          # 创建商品属性表（attribute），
-          #  用于存储商品属性信息  参数: cursor: 数据库游标对象，用于执行SQL语句  表结构说明:
-          #  1. id - 主键，自增长
-          #  2. name - 属性名称，非空
-          #  3. input_type - 输入类型，整型，取值范围为1、2、3
-          #  4. is_required - 是否必填，默认0（非必填）
-          #  5. category_id - 所属分类ID，外键关联categories表
-          #  6. sort_order - 排序序号，默认0
-          #  7. is_filterable - 是否可筛选，默认0（不可筛选）
+           # 插入示例SKU数据
            cursor.execute('''
-               CREATE TABLE IF NOT EXISTS attribute (
-                   id INTEGER PRIMARY KEY AUTOINCREMENT,
-                   name TEXT NOT NULL,
-                   input_type INTEGER NOT NULL CHECK(input_type IN (1,2,3)), 
-                   is_required INTEGER DEFAULT 0,
-                   category_id INTEGER,
-                   sort_order INTEGER DEFAULT 0,
-                   is_filterable INTEGER DEFAULT 0,
-                   FOREIGN KEY (category_id) REFERENCES categories(id)
-               )
-           ''')
-
-
-           # 创建商品属性值表（attribute_value）
-           # 表结构说明：
-           #   id - 主键，自增长整数
-           #   attribute_id - 关联属性表的外键，非空
-           #   value - 属性值文本，非空
-           #   image_url - 可选图片链接字段
-           #   sort_order - 排序序号，默认值为0
-           # 外键约束：attribute_id字段关联attribute表的id字段
-
-           cursor.execute('''
-               CREATE TABLE IF NOT EXISTS attribute_value (
-                   id INTEGER PRIMARY KEY AUTOINCREMENT,
-                   attribute_id INTEGER NOT NULL,
-                   value TEXT NOT NULL,
-                   image_url TEXT,
-                   sort_order INTEGER DEFAULT 0,
-                   FOREIGN KEY (attribute_id) REFERENCES attribute(id)
-               )
-           ''')
-
-
-
-           # SPU-属性关联表
-           #
-           #创建SPU属性关联表，用于存储商品属性与SPU的关联关系
-           #    表结构说明：
-           #      - spu_id: 关联的SPU ID，外键引用spu表的id
-           #       attribute_id: 属性ID，外键引用attribute表的id
-           #      - value: 属性值文本内容
-           #      - value_ids: 预定义属性值ID列表（JSON格式存储）
-           #       - is_custom: 是否为自定义属性（0-预定义属性 1-自定义属性）
-           #  外键约束确保数据完整性：
-           #    - spU_id必须存在于spu表
-           #   - attribute_id必须存在于attribute表
-           #
-
-
-           cursor.execute('''
-               CREATE TABLE IF NOT EXISTS spu_attribute_value (
-                   spu_id INTEGER NOT NULL,
-                   attribute_id INTEGER NOT NULL,
-                   value TEXT,
-                   value_ids TEXT,
-                   is_custom INTEGER DEFAULT 0,
-                   FOREIGN KEY (spu_id) REFERENCES spu(id),
-                   FOREIGN KEY (attribute_id) REFERENCES attribute(id)
-               )
-           ''')
+                      SELECT COUNT(*) FROM sku
+                  ''')
+           count = cursor.fetchone()[0]
+           if count == 0:
+               cursor.execute('''
+                          INSERT INTO sku (spu_id, price, stock, combination, image, status) VALUES
+                          (1, 290.00, 40, 'Color:"黑色",Size:"S"', 'static/images/nanzhuang/man_1_1.jpg', 1),
+                          (1, 290.00, 30, 'Color:"黑色",Size:"M"', 'static/images/nanzhuang/man_1_1.jpg', 1),
+                          (1, 290.00, 40, 'Color:"黑色",Size:"L"', 'static/images/nanzhuang/man_1_1.jpg', 1),
+                          (1, 290.00, 30, 'Color:"黑色",Size:"XL"', 'static/images/nanzhuang/man_1_1.jpg', 1),
+                          (1, 290.00, 20, 'Color:"黑色",Size:"XXL"', 'static/images/nanzhuang/man_1_1.jpg', 1),
+                          
+                          (2, 75.00, 20, 'Color:"黑色",Size:"M"', 'static/images/nanzhuang/man_2_1.jpg', 1),
+                          (2, 75.00, 40, 'Color:"黑色",Size:"L"', 'static/images/nanzhuang/man_2_1.jpg', 1),
+                          (2, 75.00, 60, 'Color:"黑色",Size:"XL"', 'static/images/nanzhuang/man_2_1.jpg', 1),
+                          (2, 75.00, 80, 'Color:"黑色",Size:"2XL"', 'static/images/nanzhuang/man_2_1.jpg', 1),
+                          (2, 75.00, 30, 'Color:"黑色",Size:"3XL"', 'static/images/nanzhuang/man_2_1.jpg', 1),
+                          (2, 75.00, 13, 'Color:"黑色",Size:"4XL"', 'static/images/nanzhuang/man_2_1.jpg', 1),
+                          
+                          (3, 179.00, 19, 'Color:"黑色",Size:"S"', 'static/images/nanzhuang/man_3_1.jpg', 1),
+                          (3, 179.00, 32, 'Color:"黑色",Size:"M"', 'static/images/nanzhuang/man_3_1.jpg', 1),
+                          (3, 179.00, 45, 'Color:"黑色",Size:"L"', 'static/images/nanzhuang/man_3_1.jpg', 1),
+                          (3, 179.00, 56, 'Color:"黑色",Size:"XL"', 'static/images/nanzhuang/man_3_1.jpg', 1),
+                          (3, 179.00, 68, 'Color:"黑色",Size:"2XL"', 'static/images/nanzhuang/man_3_1.jpg', 1),
+                          (3, 179.00, 25, 'Color:"黑色",Size:"3XL"', 'static/images/nanzhuang/man_3_1.jpg', 1),
+                          
+                          (4, 107.00, 21, 'Color:"黑色",Size:"48"', 'static/images/nanzhuang/man_4_1.jpg', 1),
+                          (4, 107.00, 12, 'Color:"黑色",Size:"50"', 'static/images/nanzhuang/man_4_1.jpg', 1),
+                          (4, 107.00, 12, 'Color:"黑色",Size:"52"', 'static/images/nanzhuang/man_4_1.jpg', 1),
+                          (4, 107.00, 4, 'Color:"黑色",Size:"54"', 'static/images/nanzhuang/man_4_1.jpg', 1),
+                          
+                
+                          (5, 132.00, 10, 'Color:"黑灰色条纹",Size:"L"', 'static/images/nanzhuang/man_5_1.jpg', 1),
+                          
+                          (6, 123.00, 1, 'Color:"中灰",Size:"54"', 'static/images/nanzhuang/man_6_1.jpg', 1),                  
+                          (6, 123.00, 2, 'Color:"黑灰",Size:"50"', 'static/images/nanzhuang/m5_5_2_1.jpg', 1),
+                          (6, 123.00, 3, 'Color:"黑灰",Size:"48"', 'static/images/nanzhuang/m5_5_2_1.jpg', 1),
+                          (6, 123.00, 3, 'Color:"黑灰",Size:"52"', 'static/images/nanzhuang/m5_5_2_1.jpg', 1),
+                          (6, 123.00, 2, 'Color:"黑灰",Size:"54"', 'static/images/nanzhuang/m5_5_2_1.jpg', 1),
+                          
+                          (7, 371.00, 8, 'Color:"藏青",Size:"48"', 'static/images/nanzhuang/man_7_1.jpg', 1),
+                          (7, 371.00, 8, 'Color:"藏青",Size:"50"', 'static/images/nanzhuang/man_7_1.jpg', 1),
+                          (7, 371.00, 8, 'Color:"藏青",Size:"52"', 'static/images/nanzhuang/man_7_1.jpg', 1),
+                          (7, 371.00, 8, 'Color:"藏青",Size:"54"', 'static/images/nanzhuang/man_7_1.jpg', 1);
+      
+               ''')
 
            # 轮播图片表
            cursor.execute('''
@@ -233,6 +231,133 @@ def get_carousel():
             return jsonify({
                 "code": 200,
                 "data": carousel_data,
+                "message": "Success"
+            }), 200
+
+    except sqlite3.Error as e:
+        app.logger.error(f"数据库查询失败: {str(e)}")
+        return jsonify({
+            "code": 500,
+            "data": None,
+            "message": "数据库操作失败"
+        }), 500
+    except Exception as e:
+        app.logger.error(f"系统异常: {str(e)}")
+        return jsonify({
+            "code": 500,
+            "data": None,
+            "message": "服务器内部错误"
+        }), 500
+
+@app.route('/api/products', methods=['GET'])
+def get_products():
+    """
+    获取商品列表接口
+    返回格式：
+    {
+        "code": 状态码,
+        "data": [
+            {
+                "id": 商品ID,
+                "name": 商品名称,
+                "description": 商品描述,
+                "category_id": 分类ID,
+                "main_image": 主图存储路径,
+                "detail_images": 详情图路径列表,
+                "created_at": 创建时间,
+                "skus": [
+                    {
+                        "id": SKU ID,
+                        "price": 价格,
+                        "stock": 库存数量,
+                        "combination": 规格组合,
+                        "image": 商品展示图路径,
+                        "status": 商品状态
+                    }
+                ],
+                "attributes": [
+                    {
+                        "attribute_id": 属性ID,
+                        "attribute_name": 属性名称,
+                        "value": 属性值
+                    }
+                ]
+            }
+        ],
+        "message": 状态描述
+    }
+    """
+    try:
+        with sqlite3.connect(DATABASE) as conn:
+            conn.row_factory = sqlite3.Row  # 启用行转字典功能
+            cursor = conn.cursor()
+
+            # 查询所有SPU数据
+            cursor.execute('''
+                SELECT id, name, description, category_id, main_image, detail_images, created_at 
+                FROM spu
+            ''')
+            spu_data = [dict(row) for row in cursor.fetchall()]
+
+            # 查询所有SKU数据
+            cursor.execute('''
+                SELECT id, spu_id, price, stock, combination, image, status 
+                FROM sku
+            ''')
+            sku_data = [dict(row) for row in cursor.fetchall()]
+
+            # 查询所有SPU-属性关联数据
+            cursor.execute('''
+                SELECT sav.spu_id, sav.attribute_id, av.value, a.name AS attribute_name
+                FROM spu_attribute_value sav
+                JOIN attribute_value av ON sav.value_ids LIKE '%' || av.id || '%'
+                JOIN attribute a ON sav.attribute_id = a.id
+            ''')
+            attribute_data = [dict(row) for row in cursor.fetchall()]
+
+            # 构建商品列表
+            products = []
+            for spu in spu_data:
+                product = {
+                    "id": spu['id'],
+                    "name": spu['name'],
+                    "description": spu['description'],
+                    "category_id": spu['category_id'],
+                    "main_image": spu['main_image'],
+                    "detail_images": spu['detail_images'],
+                    "created_at": spu['created_at'],
+                    "skus": [],
+                    "attributes": []
+                }
+
+                # 添加SKU信息
+                product['skus'] = [
+                    {
+                        "id": sku['id'],
+                        "price": sku['price'],
+                        "stock": sku['stock'],
+                        "combination": sku['combination'],
+                        "image": sku['image'],
+                        "status": sku['status']
+                    }
+                    for sku in sku_data if sku['spu_id'] == spu['id']
+                ]
+
+                # 添加属性信息
+                product['attributes'] = [
+                    {
+                        "attribute_id": attr['attribute_id'],
+                        "attribute_name": attr['attribute_name'],
+                        "value": attr['value']
+                    }
+                    for attr in attribute_data if attr['spu_id'] == spu['id']
+                ]
+
+                products.append(product)
+
+            return jsonify({
+                "code": 200,
+                "data": products,
                 "message": "Success"
             }), 200
 
