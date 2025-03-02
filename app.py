@@ -1,3 +1,4 @@
+import csv
 import json
 
 from flask import Flask, session,request,jsonify
@@ -44,6 +45,16 @@ def init_db():
                    FOREIGN KEY (parent_id) REFERENCES locations(id)
                )
            ''')
+        # 清空 locations 表（如果需要）
+        cursor.execute('DELETE FROM locations')
+        csv_file_path = 'E:\\Flask\\app\\locations.csv'
+        # 读取 CSV 文件并插入数据
+        with open(csv_file_path, mode='r', encoding='utf-8') as csv_file:
+            csv_reader = csv.DictReader(csv_file)
+            for row in csv_reader:
+                cursor.execute('''
+                           INSERT INTO locations (id, name, parent_id) VALUES (?, ?, ?)
+                       ''', (int(row['id']), row['name'], int(row['parent_id'])))
 
         # 用户表优化
         cursor.execute('''
@@ -932,6 +943,58 @@ def get_verification_code():
     session['verification_code'] = code
     session['verification_code_time'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     return jsonify({'verification_code': code}), 200
+
+
+
+@app.route('/api/locations', methods=['GET'])
+def get_locations():
+    try:
+        with sqlite3.connect(DATABASE) as conn:
+            conn.row_factory = sqlite3.Row  # 启用行转字典功能
+            cursor = conn.cursor()
+
+            # 查询所有省份
+            cursor.execute('''
+                SELECT id, name, parent_id 
+                FROM locations 
+                WHERE parent_id = 0
+                ORDER BY name ASC
+            ''')
+            provinces = [dict(row) for row in cursor.fetchall()]
+
+            # 查询所有城市
+            cursor.execute('''
+                SELECT id, name, parent_id 
+                FROM locations 
+                WHERE parent_id != 0
+                ORDER BY name ASC
+            ''')
+            cities = [dict(row) for row in cursor.fetchall()]
+
+            # 构建省份和城市的关系
+            for province in provinces:
+                province['cities'] = [city for city in cities if city['parent_id'] == province['id']]
+
+            return jsonify({
+                "code": 200,
+                "data": {"items":provinces},
+                "message": "Success"
+            }), 200
+
+    except sqlite3.Error as e:
+        app.logger.error(f"获取地理位置失败: {str(e)}")
+        return jsonify({
+            "code": 500,
+            "data": None,
+            "message": "数据库操作失败"
+        }), 500
+    except Exception as e:
+        app.logger.error(f"系统异常: {str(e)}")
+        return jsonify({
+            "code": 500,
+            "data": None,
+            "message": "服务器内部错误"
+        }), 500
 
 
 
