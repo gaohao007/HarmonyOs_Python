@@ -1093,11 +1093,16 @@ def insert_sample_advertisements():
 
     with sqlite3.connect(DATABASE) as conn:
         cursor = conn.cursor()
-        for ad in sample_advertisements:
-            cursor.execute('''
-                INSERT INTO advertisements (image, description)
-                VALUES (?, ?)
-            ''', (ad['image'], ad['description']))
+        # 插入模拟地址数据
+        cursor.execute('''
+                  SELECT COUNT(*) FROM advertisements
+              ''')
+        if cursor.fetchone()[0] == 0:
+            for ad in sample_advertisements:
+                cursor.execute('''
+                           INSERT INTO advertisements (image, description)
+                           VALUES (?, ?)
+                       ''', (ad['image'], ad['description']))
         conn.commit()
 
 
@@ -1481,6 +1486,62 @@ def update_user_details(user_id):
 
 
 
+@app.route('/api/random_products', methods=['GET'])
+def get_random_products():
+    try:
+        with sqlite3.connect(DATABASE) as conn:
+            conn.row_factory = sqlite3.Row  # 启用行转字典功能
+            cursor = conn.cursor()
+
+            # 获取所有SPU的ID
+            cursor.execute("SELECT id FROM spu")
+            spu_ids = [row['id'] for row in cursor.fetchall()]
+
+            # 随机选择一些SPU ID
+            selected_spu_ids = random.sample(spu_ids, min(10, len(spu_ids)))  # 假设随机选择最多10个商品
+
+            # 获取选中的SPU基础信息
+            cursor.execute('''
+                SELECT spu.*, brands.name as brand_name, categories.name as category_name 
+                FROM spu 
+                JOIN brands ON spu.brand_id = brands.id
+                JOIN categories ON spu.category_id = categories.id
+                WHERE spu.id IN ({})
+            '''.format(','.join('?' for _ in selected_spu_ids)), selected_spu_ids)
+            spu_list = [dict(row) for row in cursor.fetchall()]
+
+            # 获取每个SPU的SKU详细信息
+            for spu in spu_list:
+                cursor.execute('''
+                    SELECT * FROM sku WHERE spu_id = ?
+                ''', (spu['id'],))
+                spu['skus'] = [dict(row) for row in cursor.fetchall()]
+
+            return jsonify({
+                "code": 200,
+                "data": {"items": spu_list},
+                "message": "Success"
+            })
+
+    except sqlite3.Error as e:
+        app.logger.error(f"数据库查询失败: {str(e)}")
+        return jsonify({
+            "code": 500,
+            "data": None,
+            "message": "数据库操作失败"
+        }), 500
+    except Exception as e:
+        app.logger.error(f"系统异常: {str(e)}")
+        return jsonify({
+            "code": 500,
+            "data": None,
+            "message": "服务器内部错误"
+        }), 500
+
+
+
+
+
 @app.route('/api/advertisements', methods=['GET'])
 def get_advertisements():
     try:
@@ -1496,7 +1557,10 @@ def get_advertisements():
 
             return jsonify({
                 "code": 200,
-                "data": {"items":advertisements_data},
+                "data": {"items":advertisements_data,
+                         "isshow":True,
+                         "showTime":10
+                         },
                 "message": "Success"
             }), 200
 
@@ -3154,9 +3218,6 @@ def create_order():
         app.logger.error(f"系统异常: {str(e)}")
         return jsonify({"code": 500, "message": "服务器内部错误"}), 500
 
-
-
-
 #直接生成订单
 @app.route('/api/orders/immediate', methods=['POST'])
 def create_immediate_order():
@@ -3296,6 +3357,7 @@ def create_immediate_order():
 
 
 
+
 # 删除某个用户的订单
 @app.route('/api/orders/<int:user_id>/<int:order_id>', methods=['DELETE'])
 def delete_order(user_id, order_id):
@@ -3332,126 +3394,189 @@ def delete_order(user_id, order_id):
 # 用户只能修改未支付的订单
 @app.route('/api/orders/<int:user_id>/<int:order_id>', methods=['PUT'])
 def update_order(user_id, order_id):
+    """
+    更新订单接口
+    请求参数：
+    {
+        "quantity": 2,  // 必须（正整数）
+        "address": {  // 可选地址信息
+            "address_id": 1,  // 使用现有地址时提供
+            // 或提供新地址信息
+            "new_address": {
+                "name": "张三",
+                "phone": "13800138000",
+                "province": "广东省",
+                "city": "深圳市",
+                "district": "南山区",
+                "detail": "科技园路123号",
+                "is_default": true
+            }
+        }
+    }
+    """
     try:
         data = request.get_json()
         if not isinstance(data, dict):
             return jsonify({"code": 400, "message": "请求格式错误"}), 400
 
-        required_fields = ['cart_items', 'new_address']
-        if any(field not in data for field in required_fields):
-            return jsonify({"code": 400, "message": "缺少必要字段"}), 400
+        # 参数校验
+        new_quantity = data.get('quantity')
+        address_info = data.get('address', {})
 
-        cart_items = data['cart_items']
-        new_address = data['new_address']
+        # 校验数量有效性
+        if not isinstance(new_quantity, int) or new_quantity <= 0:
+            return jsonify({"code": 400, "message": "商品数量必须为正整数"}), 400
 
         with sqlite3.connect(DATABASE) as conn:
+            conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
 
-            # 验证用户有效性
-            cursor.execute("SELECT id FROM users WHERE id = ?", (user_id,))
-            if not cursor.fetchone():
-                return jsonify({"code": 404, "message": "用户不存在"}), 404
-
-            # 验证订单归属
-            cursor.execute("SELECT id, status FROM orders WHERE id = ? AND user_id = ?", (order_id, user_id))
+            # 验证订单有效性
+            cursor.execute('''
+                SELECT o.id, o.status, o.total_amount 
+                FROM orders o 
+                WHERE o.id = ? AND o.user_id = ?
+            ''', (order_id, user_id))
             order = cursor.fetchone()
             if not order:
                 return jsonify({"code": 404, "message": "订单不存在或不属于您"}), 404
 
-            # 验证订单状态是否为待付款
-            if order[1] != 1:
-                return jsonify({"code": 403, "message": "只能修改未支付的订单"}), 403
+            if order['status'] != 1:
+                return jsonify({"code": 403, "message": "只能修改待付款订单"}), 403
 
-            # 验证购物车项
-            cart_item_ids = [item['id'] for item in cart_items]
-            cursor.execute('''
-                SELECT id, sku_id, quantity, s.price
-                FROM cart c
-                JOIN sku s ON c.sku_id = s.id
-                WHERE c.id IN ({})
-                AND c.user_id = ?
-            '''.format(','.join('?' for _ in cart_item_ids)), cart_item_ids + [user_id])
-            fetched_cart_items = cursor.fetchall()
+            # 事务开始
+            conn.execute("BEGIN TRANSACTION")
 
-            if len(fetched_cart_items) != len(cart_items):
-                return jsonify({"code": 400, "message": "购物车项无效"}), 400
-
-            # 计算总金额
-            total_amount = sum(item[3] * item['quantity'] for item in cart_items)
-
-            # 更新订单总金额
-            cursor.execute("UPDATE orders SET total_amount = ? WHERE id = ?", (total_amount, order_id))
-
-            # 更新订单商品明细
-            cursor.execute("DELETE FROM order_items WHERE order_id = ?", (order_id,))
-            for item in cart_items:
-                sku_id = item['sku_id']
-                quantity = item['quantity']
-                price = item['price']
-
+            try:
+                # 获取订单项和SKU信息
                 cursor.execute('''
-                    INSERT INTO order_items 
-                    (order_id, sku_id, sku_name, sku_image, price, quantity)
-                    SELECT ?, s.id, s.name, s.image, s.price, ?
-                    FROM sku s
-                    WHERE s.id = ?
-                ''', (order_id, quantity, sku_id))
+                    SELECT oi.id AS order_item_id, oi.quantity AS old_quantity, 
+                           oi.sku_id, s.price, s.stock
+                    FROM order_items oi
+                    JOIN sku s ON oi.sku_id = s.id
+                    WHERE oi.order_id = ?
+                ''', (order_id,))
+                order_items = cursor.fetchall()
 
-            # 处理用户地址
-            if new_address:
-                name = new_address.get('name').strip()
-                phone = new_address.get('phone').strip()
-                province = new_address.get('province').strip()
-                city = new_address.get('city').strip()
-                district = new_address.get('district').strip()
-                detail = new_address.get('detail').strip()
-                is_default = new_address.get('is_default', 0)  # 默认为0，即非默认地址
+                if not order_items:
+                    raise ValueError("订单中没有商品项")
 
-                # 插入新地址
-                cursor.execute('''
-                    INSERT INTO user_address (
-                        user_id, name, phone, province, city, district, detail, is_default, created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ''', (user_id, name, phone, province, city, district, detail, is_default, datetime.now()))
+                total_amount = 0
+                for order_item in order_items:
+                    sku_id = order_item['sku_id']
+                    old_quantity = order_item['old_quantity']
 
-                # 获取新插入的地址ID
-                address_id = cursor.lastrowid
+                    # 计算库存变化
+                    stock_change = new_quantity - old_quantity
 
-                # 如果新地址设置为默认地址，更新其他地址为非默认
-                if is_default:
+                    # 校验库存
+                    if stock_change > 0:  # 仅校验增加数量的情况
+                        if order_item['stock'] < stock_change:
+                            raise ValueError(f"商品库存不足，SKU ID: {sku_id}")
+
+                    # 更新订单项数量
                     cursor.execute('''
-                        UPDATE user_address 
-                        SET is_default = 0 
-                        WHERE user_id = ? AND id != ?
-                    ''', (user_id, address_id))
+                        UPDATE order_items 
+                        SET quantity = ?
+                        WHERE id = ?
+                    ''', (new_quantity, order_item['order_item_id']))
 
-                # 插入订单地址信息
+                    # 累计总金额
+                    total_amount += order_item['price'] * new_quantity
+
+                # 更新订单总金额
                 cursor.execute('''
-                    INSERT INTO order_address 
-                    (order_id, user_id, address_id)
-                    VALUES (?, ?, ?)
-                ''', (order_id, user_id, address_id))
-            else:
-                return jsonify({"code": 400, "message": "缺少地址信息"}), 400
+                    UPDATE orders 
+                    SET total_amount = ?
+                    WHERE id = ?
+                ''', (total_amount, order_id))
 
-            conn.commit()
-            return jsonify({
-                "code": 200,
-                "data": {
-                    "order_id": order_id,
-                    "total_amount": total_amount
-                },
-                "message": "订单更新成功"
-            })
+                # 处理地址信息
+                if address_info:
+                    if 'address_id' in address_info:
+                        # 验证现有地址归属
+                        cursor.execute('''
+                            SELECT id 
+                            FROM user_address 
+                            WHERE id = ? AND user_id = ?
+                        ''', (address_info['address_id'], user_id))
+                        if not cursor.fetchone():
+                            raise ValueError("地址信息不存在或不属于您")
+
+                        # 更新订单地址关联
+                        cursor.execute('''
+                            UPDATE order_address 
+                            SET address_id = ? 
+                            WHERE order_id = ?
+                        ''', (address_info['address_id'], order_id))
+                    elif 'new_address' in address_info:
+                        # 插入新地址逻辑
+                        addr = address_info['new_address']
+                        name = addr.get('name').strip()
+                        phone = addr.get('phone').strip()
+                        province = addr.get('province').strip()
+                        city = addr.get('city').strip()
+                        district = addr.get('district').strip()
+                        detail = addr.get('detail').strip()
+                        is_default = addr.get('is_default', 0)  # 默认为0，即非默认地址
+
+                        # 校验地址信息
+                        if not all([name, phone, province, city, district, detail]):
+                            raise ValueError("新地址信息不完整")
+
+                        # 插入新地址
+                        cursor.execute('''
+                            INSERT INTO user_address (
+                                user_id, name, phone, province, city, district, detail, is_default, created_at
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ''', (user_id, name, phone, province, city, district, detail, is_default, datetime.now()))
+
+                        # 获取新插入的地址ID
+                        address_id = cursor.lastrowid
+
+                        # 如果新地址设置为默认地址，更新其他地址为非默认
+                        if is_default:
+                            cursor.execute('''
+                                UPDATE user_address 
+                                SET is_default = 0 
+                                WHERE user_id = ? AND id != ?
+                            ''', (user_id, address_id))
+
+                        # 更新订单地址关联
+                        cursor.execute('''
+                            UPDATE order_address 
+                            SET address_id = ? 
+                            WHERE order_id = ?
+                        ''', (address_id, order_id))
+
+                conn.commit()
+                return jsonify({
+                    "code": 200,
+                    "data": {
+                        "order_id": order_id,
+                        "new_total": total_amount
+                    },
+                    "message": "订单更新成功"
+                })
+
+            except ValueError as ve:
+                conn.rollback()
+                return jsonify({"code": 400, "message": str(ve)}), 400
+            except Exception as e:
+                conn.rollback()
+                app.logger.error(f"系统异常: {str(e)}")
+                return jsonify({"code": 500, "message": "服务器内部错误"}), 500
 
     except sqlite3.Error as e:
-        conn.rollback()
         app.logger.error(f"数据库错误: {str(e)}")
         return jsonify({"code": 500, "message": "数据库操作失败"}), 500
     except Exception as e:
-        conn.rollback()
         app.logger.error(f"系统异常: {str(e)}")
         return jsonify({"code": 500, "message": "服务器内部错误"}), 500
+
+
+
+
 
 
 # 模拟支付完成后更新订单状态为已支付
@@ -3580,8 +3705,6 @@ def ship_order(user_id, order_id):
             # 更新订单状态为已发货
             cursor.execute("UPDATE orders SET status = 3 WHERE id = ?", (order_id,))
 
-            # 更新物流信息状态为已发货（如果需要）
-            cursor.execute("UPDATE order_logistics SET status = 1 WHERE order_id = ?", (order_id,))
 
             conn.commit()
 
