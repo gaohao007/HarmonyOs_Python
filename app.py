@@ -798,7 +798,7 @@ def init_db():
                    user_id INTEGER NOT NULL,
                    content TEXT NOT NULL,
                    rate INTEGER CHECK(rate BETWEEN 1 AND 5),  -- 评分1-5星
-                   touxiang TEXT DEFAULT 'http://127.0.0.1:5000/static/images/touxiang.png',
+                   touxiang TEXT DEFAULT 'static/images/touxiang.png',
                    is_anonymous BOOLEAN DEFAULT 0,
                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                    FOREIGN KEY (spu_id) REFERENCES spu(id),
@@ -1771,7 +1771,7 @@ def update_user_details(user_id):
 
 
 
-
+#猜你喜欢
 @app.route('/api/random_products', methods=['GET'])
 def get_random_products():
     try:
@@ -2432,6 +2432,8 @@ def get_product_details(spu_id):
             # 将SKU信息中的attributes字段从JSON字符串转换为Python列表
             for sku in sku_list:
                 sku['attributes'] = json.loads(sku['attributes'])
+                # 解析image字段从JSON字符串转换为Python列表
+                sku['image'] = json.loads(sku['image'])
 
             # 构建最终的商品详细信息
             product_details = {
@@ -2463,6 +2465,7 @@ def get_product_details(spu_id):
     except Exception as e:
         app.logger.error(f"系统异常: {str(e)}")
         return jsonify({"code": 500, "message": "服务器内部错误"}), 500
+
 
 
 
@@ -2587,10 +2590,12 @@ def get_products_by_category(category_id):
 
 
 
+
+
 ##########评论接口
 #创建评论接口
-@app.route('/api/products/<int:spu_id>/comments/<int:user_id>', methods=['POST'])
-def create_product_comment(spu_id, user_id):
+@app.route('/api/products/<int:sku_id>/comments/<int:user_id>', methods=['POST'])
+def create_product_comment(sku_id, user_id):
     try:
         data = request.get_json()
         if not isinstance(data, dict):
@@ -2612,10 +2617,13 @@ def create_product_comment(spu_id, user_id):
         with sqlite3.connect(DATABASE) as conn:
             cursor = conn.cursor()
 
-            # 检查商品是否存在
-            cursor.execute("SELECT id FROM spu WHERE id = ?", (spu_id,))
-            if not cursor.fetchone():
+            # 检查SKU是否存在
+            cursor.execute("SELECT id, spu_id FROM sku WHERE id = ?", (sku_id,))
+            sku = cursor.fetchone()
+            if not sku:
                 return jsonify({"code": 404, "message": "商品不存在"}), 404
+
+            spu_id = sku[1]
 
             # 检查用户是否有订单状态为“已完成”的订单
             cursor.execute('''
@@ -2624,18 +2632,21 @@ def create_product_comment(spu_id, user_id):
             if not cursor.fetchone():
                 return jsonify({"code": 403, "message": "只有订单状态为已完成的用户才可以评论"}), 403
 
-            # 插入评论
+            # 获取用户信息
             cursor.execute('''
-                SELECT avatar FROM users WHERE id = ?
+                SELECT username, avatar FROM users WHERE id = ?
             ''', (user_id,))
-            avatar = cursor.fetchone()
-            if not avatar:
+            user = cursor.fetchone()
+            if not user:
                 return jsonify({"code": 404, "message": "用户不存在"}), 404
 
+            username, avatar = user
+
+            # 插入评论
             cursor.execute('''
-                INSERT INTO product_comment (spu_id, user_id, content, rate, touxiang, created_at)
-                VALUES (?, ?, ?, ?, ?, ?)
-            ''', (spu_id, user_id, content, rate, avatar[0], datetime.now()))
+                INSERT INTO product_comment (spu_id, user_id, username, content, rate, touxiang, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', (spu_id, user_id, username, content, rate, avatar, datetime.now()))
             conn.commit()
 
             return jsonify({"code": 200, "message": "评论成功"}), 200
@@ -2646,6 +2657,7 @@ def create_product_comment(spu_id, user_id):
     except Exception as e:
         app.logger.error(f"系统异常: {str(e)}")
         return jsonify({"code": 500, "message": "服务器内部错误"}), 500
+
 
 
 # 获取用户下的评论接口
@@ -2963,9 +2975,9 @@ def get_cart(user_id):
             if not cursor.fetchone():
                 return jsonify({"code": 404, "message": "用户不存在"}), 404
 
-            # 获取购物车数据
+            # 获取购物车数据，包含 selected 字段和 stock 字段
             cursor.execute('''
-                SELECT c.id, c.sku_id, c.quantity, s.price, s.image, s.attributes AS sku_attributes,
+                SELECT c.id, c.sku_id, c.quantity, c.selected, s.price, s.image, s.attributes AS sku_attributes, s.stock,
                        spu.name AS spu_name, spu.id AS spu_id, spu.description AS spu_description, spu.main_image AS spu_main_image
                 FROM cart c
                 JOIN sku s ON c.sku_id = s.id
@@ -2978,7 +2990,18 @@ def get_cart(user_id):
                 item = dict(row)
                 # 解析SKU属性
                 sku_attributes = json.loads(item['sku_attributes'])
-                item['sku_attributes'] = {attr['attribute_id']: attr['value'] for attr in sku_attributes}
+                item['color'] = None
+                item['size'] = None
+
+                for attr in sku_attributes:
+                    if attr['attribute_id'] == 1:  # 假设 attribute_id 为 1 表示颜色
+                        item['color'] = attr['value']
+                    elif attr['attribute_id'] == 2:  # 假设 attribute_id 为 2 表示尺寸
+                        item['size'] = attr['value']
+
+                # 移除原始的 sku_attributes 字段
+                del item['sku_attributes']
+
                 cart_items.append(item)
 
             return jsonify({
@@ -2993,6 +3016,9 @@ def get_cart(user_id):
     except Exception as e:
         app.logger.error(f"系统异常: {str(e)}")
         return jsonify({"code": 500, "message": "服务器内部错误"}), 500
+
+
+
 
 
 # 购物车更新接口
@@ -3064,7 +3090,8 @@ def update_cart_item(user_id, item_id):
         return jsonify({"code": 500, "message": "数据库操作失败"}), 500
     except Exception as e:
         app.logger.error(f"系统异常: {str(e)}")
-        return jsonify({"code": 500, "message": "服务器内部错误"}), 500
+        return jsonify({"code": 500, "message": "服务器内部错误"}), 500\
+
 
 # 实现勾选或取消勾选购物车中商品的功能
 @app.route('/api/cart/<int:user_id>/<int:item_id>/select', methods=['PUT'])
@@ -3112,6 +3139,14 @@ def select_cart_item(user_id, item_id):
 
 
 ##订单模块
+# 获取用户订单状态
+# 定义属性名称映射表
+attribute_name_mapping = {
+    "尺码": "size",
+    "颜色": "color",
+    # 其他可能的属性名称及其对应的英文翻译
+}
+
 @app.route('/api/orders/<int:user_id>/<int:status>', methods=['GET'])
 def get_user_orders_by_status(user_id, status):
     try:
@@ -3167,14 +3202,22 @@ def get_user_orders_by_status(user_id, status):
                 items = []
                 for item in cursor.fetchall():
                     item_data = dict(item)
-                    # 解析SKU属性
-                    attributes = json.loads(item_data['sku_attributes'])
-                    item_data['specs'] = {attr['attribute_id']: attr['value'] for attr in attributes}
+                    # 解析SKU属性并转换为英文名称
+                    attributes = json.loads(item_data.get('sku_attributes', '[]'))
+                    specs = {}
+                    for attr in attributes:
+                        cursor.execute("SELECT name FROM attributes WHERE id = ?", (attr['attribute_id'],))
+                        attr_name = cursor.fetchone()[0]
+                        # 使用映射表将属性名称转换为英文
+                        english_attr_name = attribute_name_mapping.get(attr_name, attr_name)
+                        specs[english_attr_name] = attr['value']
+                    item_data['specs'] = specs
                     items.append(item_data)
 
+                # 使用 get_related_data 获取关联数据
                 order_dict.update({
-                    "spu_main_image": order['spu_main_image'],
-                    "spu_description": order['spu_description'],
+                    "spu_main_image": order_dict.get('spu_main_image'),
+                    "spu_description": order_dict.get('spu_description'),
                     "items": items,
                     "address": get_related_data(cursor, 'order_address', order_id),
                     "payment": get_related_data(cursor, 'payment_records', order_id),
@@ -3197,11 +3240,27 @@ def get_user_orders_by_status(user_id, status):
     except Exception as e:
         app.logger.error(f"系统异常: {str(e)}")
         return jsonify({"code": 500, "message": "服务器内部错误"}), 500
-def get_related_data(cursor, table_name, order_id, is_list=False):
-    """通用方法获取关联数据"""
-    cursor.execute(f"SELECT * FROM {table_name} WHERE order_id = ?", (order_id,))
-    result = cursor.fetchall()
-    return [dict(row) for row in result] if is_list else (dict(result[0]) if result else None)
+
+def get_related_data(cursor, table_name, order_id):
+    try:
+        # 查询关联数据
+        cursor.execute(f'''
+            SELECT * FROM {table_name}
+            WHERE order_id = ?
+        ''', (order_id,))
+        result = cursor.fetchone()
+        return dict(result) if result else None
+    except sqlite3.Error as e:
+        app.logger.error(f"数据库查询失败: {str(e)}")
+        return None
+
+
+
+
+
+
+
+
 
 
 
@@ -3219,28 +3278,29 @@ def get_user_orders(user_id):
             if not cursor.fetchone():
                 return jsonify({"code": 404, "message": "用户不存在"}), 404
 
-            # 查询用户订单基础信息
-            # 获取用户订单信息
+            # 查询用户订单基础信息，包括address_id
             cursor.execute('''
-                               SELECT 
-                                   o.id, 
-                                   o.order_no, 
-                                   o.total_amount, 
-                                   o.status, 
-                                   strftime('%Y-%m-%dT%H:%M:%SZ', o.created_at) as created_at,
-                                   strftime('%Y-%m-%dT%H:%M:%SZ', o.pay_time) as pay_time,
-                                   strftime('%Y-%m-%dT%H:%M:%SZ', o.delivery_time) as delivery_time,
-                                   strftime('%Y-%m-%dT%H:%M:%SZ', o.finish_time) as finish_time,
-                                   ua.name as address_name,
-                                   ua.phone as address_phone,
-                                   ua.province as address_province,
-                                   ua.city as address_city,
-                                   ua.district as address_district,
-                                   ua.detail as address_detail
-                               FROM orders o
-                               LEFT JOIN order_address oa ON o.id = oa.order_id
-                               LEFT JOIN user_address ua ON oa.address_id = ua.id
-                               WHERE o.user_id = ?
+                                 SELECT DISTINCT 
+                                      o.id, 
+                                      o.order_no, 
+                                      o.total_amount, 
+                                      o.status, 
+                                      strftime('%Y-%m-%dT%H:%M:%SZ', o.created_at) as created_at,
+                                      strftime('%Y-%m-%dT%H:%M:%SZ', o.pay_time) as pay_time,
+                                      strftime('%Y-%m-%dT%H:%M:%SZ', o.delivery_time) as delivery_time,
+                                      strftime('%Y-%m-%dT%H:%M:%SZ', o.finish_time) as finish_time,
+                                      ua.name as address_name,
+                                      ua.phone as address_phone,
+                                      ua.province as address_province,
+                                      ua.city as address_city,
+                                      ua.district as address_district,
+                                      ua.detail as address_detail,
+                                      oa.address_id as address_id  
+                                  FROM orders o
+                                  LEFT JOIN order_address oa ON o.id = oa.order_id
+                                  LEFT JOIN user_address ua ON oa.address_id = ua.id
+                                  WHERE o.user_id = ?
+    
                            ''', (user_id,))
 
             orders = [dict(row) for row in cursor.fetchall()]
@@ -3267,7 +3327,23 @@ def get_user_orders(user_id):
                     item = dict(row)
                     # 解析SKU属性
                     sku_attributes = json.loads(item['sku_attributes'])
-                    item['sku_attributes'] = {attr['attribute_id']: attr['value'] for attr in sku_attributes}
+                    # 创建一个字典来存储可读性更好的属性名
+                    readable_attributes = {}
+                    for attr in sku_attributes:
+                        attribute_id = attr['attribute_id']
+                        value = attr['value']
+                        # 查询属性名称
+                        cursor.execute("SELECT name FROM attributes WHERE id = ?", (attribute_id,))
+                        attr_name = cursor.fetchone()
+                        if attr_name:
+                            attr_name = attr_name[0]
+                            if attr_name == '颜色':
+                                readable_attributes['color'] = value
+                            elif attr_name == '尺码':
+                                readable_attributes['size'] = value
+                            else:
+                                readable_attributes[attr_name] = value
+                    item['sku_attributes'] = readable_attributes
                     items.append(item)
                 order['items'] = items
 
@@ -3286,7 +3362,6 @@ def get_user_orders(user_id):
     except Exception as e:
         app.logger.error(f"系统异常: {str(e)}")
         return jsonify({"code": 500, "message": "服务器内部错误"}), 500
-
 
 
 
@@ -3402,9 +3477,8 @@ def create_order():
         user_id = data.get('user_id')
         cart_items = data.get('cart_items')
         address_id = data.get('address_id')
-        new_address = data.get('new_address')
 
-        if not user_id or not cart_items:
+        if not user_id or not cart_items or not address_id:
             return jsonify({"code": 400, "message": "缺少必要的字段"}), 400
 
         with sqlite3.connect(DATABASE) as conn:
@@ -3428,6 +3502,13 @@ def create_order():
 
             if len(fetched_cart_items) != len(cart_items):
                 return jsonify({"code": 400, "message": "购物车项无效"}), 400
+
+            # 验证地址是否存在且属于该用户
+            cursor.execute('''
+                SELECT id FROM user_address WHERE id = ? AND user_id = ?
+            ''', (address_id, user_id))
+            if not cursor.fetchone():
+                return jsonify({"code": 400, "message": "地址无效"}), 400
 
             # 计算总金额
             total_amount = sum(item[3] * item[2] for item in fetched_cart_items)
@@ -3458,73 +3539,18 @@ def create_order():
                     WHERE s.id = ?
                 ''', (order_id, price, quantity, sku_id))
 
-            # 处理用户地址
-            if address_id:
-                # 验证地址是否存在且属于该用户
-                cursor.execute('''
-                    SELECT id FROM user_address WHERE id = ? AND user_id = ?
-                ''', (address_id, user_id))
-                if not cursor.fetchone():
-                    return jsonify({"code": 400, "message": "地址无效"}), 400
+            # 插入订单地址信息
+            cursor.execute('''
+                INSERT INTO order_address 
+                (order_id, user_id, address_id)
+                VALUES (?, ?, ?)
+            ''', (order_id, user_id, address_id))
 
-                # 插入订单地址信息
-                cursor.execute('''
-                    INSERT INTO order_address 
-                    (order_id, user_id, address_id)
-                    VALUES (?, ?, ?)
-                ''', (order_id, user_id, address_id))
-            elif new_address:
-                # 插入新地址
-                name = new_address.get('name')
-                phone = new_address.get('phone')
-                province = new_address.get('province')
-                city = new_address.get('city')
-                district = new_address.get('district')
-                detail = new_address.get('detail')
-                is_default = new_address.get('is_default', False)
-
-                cursor.execute('''
-                    INSERT INTO user_address (
-                        user_id, name, phone, province, 
-                        city, district, detail, is_default, created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ''', (
-                    user_id,
-                    name,
-                    phone,
-                    province,
-                    city,
-                    district,
-                    detail,
-                    is_default,
-                    datetime.now()
-                ))
-
-                # 获取新插入的地址ID
-                address_id = cursor.lastrowid
-
-                # 如果新地址设置为默认地址，更新其他地址为非默认
-                if is_default:
-                    cursor.execute('''
-                        UPDATE user_address 
-                        SET is_default = 0 
-                        WHERE user_id = ? AND id != ?
-                    ''', (user_id, address_id))
-
-                # 插入订单地址信息
-                cursor.execute('''
-                    INSERT INTO order_address 
-                    (order_id, user_id, address_id)
-                    VALUES (?, ?, ?)
-                ''', (order_id, user_id, address_id))
-            else:
-                return jsonify({"code": 400, "message": "缺少地址信息"}), 400
-
-                # 删除购物车中的商品
+            # 删除购物车中的商品
             for cart_item in cart_items:
-                    cursor.execute('''
-                               DELETE FROM cart WHERE id = ? AND user_id = ?
-                           ''', (cart_item['id'], user_id))
+                cursor.execute('''
+                    DELETE FROM cart WHERE id = ? AND user_id = ?
+                ''', (cart_item['id'], user_id))
 
             conn.commit()
 
@@ -3547,7 +3573,10 @@ def create_order():
         app.logger.error(f"系统异常: {str(e)}")
         return jsonify({"code": 500, "message": "服务器内部错误"}), 500
 
+
 #直接生成订单
+# 直接生成订单接口（立即购买）
+# 直接生成订单接口（立即购买）
 @app.route('/api/orders/immediate', methods=['POST'])
 def create_immediate_order():
     try:
@@ -3555,19 +3584,22 @@ def create_immediate_order():
         if not isinstance(data, dict):
             return jsonify({"code": 400, "message": "请求格式错误"}), 400
 
-        required_fields = ['user_id', 'spu_id', 'quantity', 'new_address']
+        # 校验必要字段
+        required_fields = ['user_id', 'sku_id', 'quantity', 'address_id']
         if any(field not in data for field in required_fields):
             return jsonify({"code": 400, "message": "缺少必要字段"}), 400
 
         user_id = data['user_id']
-        spu_id = data['spu_id']
+        sku_id = data['sku_id']
         quantity = data['quantity']
-        new_address = data['new_address']
+        address_id = data['address_id']
 
+        # 参数校验
         if not isinstance(quantity, int) or quantity < 1:
             return jsonify({"code": 400, "message": "数量必须为正整数"}), 400
 
         with sqlite3.connect(DATABASE) as conn:
+            conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
 
             # 验证用户有效性
@@ -3575,103 +3607,98 @@ def create_immediate_order():
             if not cursor.fetchone():
                 return jsonify({"code": 404, "message": "用户不存在"}), 404
 
-            # 验证商品有效性
-            cursor.execute("SELECT id, stock FROM sku WHERE spu_id = ? LIMIT 1", (spu_id,))
+            # 开始事务并锁定表
+            cursor.execute("BEGIN IMMEDIATE")
+
+            # 验证SKU有效性并锁定库存
+            cursor.execute("""
+                SELECT 
+                    sku.id,
+                    sku.price,
+                    sku.stock,
+                    sku.spu_id,
+                    spu.name AS spu_name,
+                    spu.main_image AS spu_image
+                FROM sku
+                JOIN spu ON sku.spu_id = spu.id
+                WHERE sku.id = ? AND sku.status = 1
+            """, (sku_id,))
             sku_data = cursor.fetchone()
+
             if not sku_data:
-                return jsonify({"code": 404, "message": "商品不存在"}), 404
+                conn.rollback()
+                return jsonify({"code": 404, "message": "商品不存在或已下架"}), 404
 
-            sku_id = sku_data[0]
-            stock = sku_data[1]
-
-            # 检查库存是否足够
-            if quantity > stock:
+            if sku_data['stock'] < quantity:
+                conn.rollback()
                 return jsonify({"code": 400, "message": "库存不足"}), 400
 
-            # 计算总金额（假设每个SKU的价格相同，实际应用中可能需要从SKU表中获取价格）
-            cursor.execute("SELECT price FROM sku WHERE id = ?", (sku_id,))
-            price = cursor.fetchone()[0]
-            total_amount = quantity * price
+            # 计算总金额
+            total_amount = sku_data['price'] * quantity
 
-            # 获取SPU的详细信息
-            cursor.execute("""
-                SELECT name, main_image 
-                FROM spu 
-                WHERE id = ?
-            """, (spu_id,))
-            spu_data = cursor.fetchone()
-            if not spu_data:
-                return jsonify({"code": 404, "message": "商品信息缺失"}), 404
-
-            spu_name = spu_data[0]
-            spu_image = spu_data[1]
-
-            # 生成订单号
+            # 生成订单号（时间戳+随机数）
             order_no = datetime.now().strftime("%Y%m%d%H%M%S") + str(random.randint(1000, 9999))
 
-            # 创建订单主记录
-            cursor.execute('''
-                INSERT INTO orders 
-                (order_no, user_id, total_amount, status, created_at)
-                VALUES (?, ?, ?, 1, ?)
-            ''', (order_no, user_id, total_amount, datetime.now()))
-
-            order_id = cursor.lastrowid
-
-            # 插入订单商品明细
-            cursor.execute('''
-                INSERT INTO order_items 
-                (order_id, sku_id, sku_name, sku_image, price, quantity)
-                VALUES (?, ?, ?, ?, ?, ?)
-            ''', (order_id, sku_id, spu_name, spu_image, price, quantity))
-
-            # 处理用户地址
-            if new_address:
-                name = new_address.get('name').strip()
-                phone = new_address.get('phone').strip()
-                province = new_address.get('province').strip()
-                city = new_address.get('city').strip()
-                district = new_address.get('district').strip()
-                detail = new_address.get('detail').strip()
-                is_default = new_address.get('is_default', 0)  # 默认为0，即非默认地址
-
-                # 插入新地址
+            try:
+                # 创建订单主记录
                 cursor.execute('''
-                    INSERT INTO user_address (
-                        user_id, name, phone, province, city, district, detail, is_default, created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ''', (user_id, name, phone, province, city, district, detail, is_default, datetime.now()))
+                    INSERT INTO orders 
+                    (order_no, user_id, total_amount, status, created_at)
+                    VALUES (?, ?, ?, 1, ?)
+                ''', (order_no, user_id, total_amount, datetime.now()))
+                order_id = cursor.lastrowid
 
-                # 获取新插入的地址ID
-                address_id = cursor.lastrowid
+                # 插入订单商品明细
+                cursor.execute('''
+                    INSERT INTO order_items 
+                    (order_id, sku_id, sku_name, sku_image, price, quantity)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                ''', (
+                    order_id,
+                    sku_id,
+                    sku_data['spu_name'],
+                    sku_data['spu_image'],
+                    sku_data['price'],
+                    quantity
+                ))
 
-                # 如果新地址设置为默认地址，更新其他地址为非默认
-                if is_default:
-                    cursor.execute('''
-                        UPDATE user_address 
-                        SET is_default = 0 
-                        WHERE user_id = ? AND id != ?
-                    ''', (user_id, address_id))
+                # 验证现有地址归属
+                cursor.execute('''
+                    SELECT id FROM user_address 
+                    WHERE id = ? AND user_id = ?
+                ''', (address_id, user_id))
+                if not cursor.fetchone():
+                    raise ValueError("地址信息不存在或不属于您")
 
-                # 插入订单地址信息
+                # 关联订单地址
                 cursor.execute('''
                     INSERT INTO order_address 
                     (order_id, user_id, address_id)
                     VALUES (?, ?, ?)
                 ''', (order_id, user_id, address_id))
-            else:
-                return jsonify({"code": 400, "message": "缺少地址信息"}), 400
 
-            conn.commit()
-            return jsonify({
-                "code": 200,
-                "data": {
-                    "order_id": order_id,
-                    "order_no": order_no,
-                    "total_amount": total_amount
-                },
-                "message": "订单创建成功"
-            })
+                # 扣减库存
+                cursor.execute('''
+                    UPDATE sku 
+                    SET stock = stock - ?, sales_count = sales_count + ?
+                    WHERE id = ?
+                ''', (quantity, quantity, sku_id))
+
+                conn.commit()
+
+                return jsonify({
+                    "code": 200,
+                    "data": {
+                        "order_id": order_id,
+                        "order_no": order_no,
+                        "total_amount": total_amount
+                    },
+                    "message": "订单创建成功"
+                })
+
+            except ValueError as e:
+                conn.rollback()
+                return jsonify({"code": 400, "message": str(e)}), 400
 
     except sqlite3.Error as e:
         conn.rollback()
@@ -3681,10 +3708,6 @@ def create_immediate_order():
         conn.rollback()
         app.logger.error(f"系统异常: {str(e)}")
         return jsonify({"code": 500, "message": "服务器内部错误"}), 500
-
-
-
-
 
 
 # 删除某个用户的订单
@@ -3935,13 +3958,9 @@ def pay_order(user_id, order_id):
         if not isinstance(data, dict):
             return jsonify({"code": 400, "message": "请求格式错误"}), 400
 
-        required_fields = ['receiver_name', 'receiver_phone', 'receiver_address']
-        if any(field not in data for field in required_fields):
-            return jsonify({"code": 400, "message": "缺少必要字段"}), 400
-
-        receiver_name = data['receiver_name'].strip()
-        receiver_phone = data['receiver_phone'].strip()
-        receiver_address = data['receiver_address'].strip()
+        address_id = data.get('address_id')
+        if not address_id:
+            return jsonify({"code": 400, "message": "缺少必要字段 address_id"}), 400
 
         with sqlite3.connect(DATABASE) as conn:
             cursor = conn.cursor()
@@ -3961,6 +3980,20 @@ def pay_order(user_id, order_id):
             if order[1] != 1:
                 return jsonify({"code": 403, "message": "订单状态不是待付款"}), 403
 
+            # 获取用户地址信息
+            cursor.execute('''
+                SELECT name, phone, province, city, district, detail 
+                FROM user_address 
+                WHERE id = ? AND user_id = ?
+            ''', (address_id, user_id))
+            address = cursor.fetchone()
+            if not address:
+                return jsonify({"code": 404, "message": "地址无效或不属于您"}), 404
+
+            receiver_name = address[0]
+            receiver_phone = address[1]
+            receiver_address = f"{address[2]} {address[3]} {address[4]} {address[5]}"
+
             # 生成支付编号
             payment_no = generate_verification_code()
 
@@ -3979,6 +4012,12 @@ def pay_order(user_id, order_id):
                 INSERT INTO order_logistics (order_id, logistics_no, company_code, company_name, receiver_name, receiver_phone, receiver_address)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
             ''', (order_id, logistics_no, 'WX', '微信物流', receiver_name, receiver_phone, receiver_address))
+
+            # 插入订单地址关联信息
+            cursor.execute('''
+                INSERT INTO order_address (order_id, user_id, address_id)
+                VALUES (?, ?, ?)
+            ''', (order_id, user_id, address_id))
 
             conn.commit()
 
@@ -4006,6 +4045,7 @@ def pay_order(user_id, order_id):
         conn.rollback()
         app.logger.error(f"系统异常: {str(e)}")
         return jsonify({"code": 500, "message": "服务器内部错误"}), 500
+
 
 
 # 催发货接口
@@ -4093,7 +4133,502 @@ def receive_order(user_id, order_id):
         app.logger.error(f"系统异常: {str(e)}")
         return jsonify({"code": 500, "message": "服务器内部错误"}), 500
 
-# 支付接口
+
+
+
+
+
+
+
+
+
+
+
+
+
+#设计综合,销量 价格的接口
+
+@app.route('/api/products/ranked', methods=['GET'])
+def get_ranked_products():
+    try:
+        with sqlite3.connect(DATABASE) as conn:
+            conn.row_factory = sqlite3.Row  # 启用行转字典功能
+            cursor = conn.cursor()
+
+            # 查询SPU和SKU信息，并计算综合排名
+            cursor.execute('''
+                SELECT 
+                    spu.id AS spu_id,
+                    spu.name AS spu_name,
+                    spu.description AS spu_description,
+                    spu.main_image AS spu_main_image,
+                    spu.detail_images AS spu_detail_images,
+                    spu.sales_count AS spu_sales_count,
+                    spu.review_count AS spu_review_count,
+                    spu.status AS spu_status,
+                    spu.created_at AS spu_created_at,
+                    spu.updated_at AS spu_updated_at,
+                    spu.is_hot AS spu_is_hot,
+                    brands.name AS brand_name,
+                    categories.name AS category_name,
+                    SUM(sku.sales_count) AS total_sales,
+                    AVG(sku.price) AS avg_price
+                FROM 
+                    spu
+                JOIN 
+                    brands ON spu.brand_id = brands.id
+                JOIN 
+                    categories ON spu.category_id = categories.id
+                JOIN 
+                    sku ON spu.id = sku.spu_id
+                GROUP BY 
+                    spu.id
+                ORDER BY 
+                    (spu.sales_count * 0.5 - AVG(sku.price) * 0.5) DESC
+            ''')
+
+            products = [dict(row) for row in cursor.fetchall()]
+
+            return jsonify({
+                "code": 200,
+                "data": {"items": products},
+                "message": "Success"
+            }), 200
+
+    except sqlite3.Error as e:
+        app.logger.error(f"数据库错误: {str(e)}")
+        return jsonify({"code": 500, "message": "数据库操作失败"}), 500
+    except Exception as e:
+        app.logger.error(f"系统异常: {str(e)}")
+        return jsonify({"code": 500, "message": "服务器内部错误"}), 500
+
+
+@app.route('/api/products/by_price', methods=['GET'])
+def get_products_by_price():
+    try:
+        with sqlite3.connect(DATABASE) as conn:
+            conn.row_factory = sqlite3.Row  # 启用行转字典功能
+            cursor = conn.cursor()
+
+            # 查询SPU和SKU信息，并按价格排序，同时获取总销量
+            cursor.execute('''
+                SELECT 
+                    spu.id AS spu_id,
+                    spu.name AS spu_name,
+                    spu.description AS spu_description,
+                    spu.main_image AS spu_main_image,
+                    spu.detail_images AS spu_detail_images,
+                    spu.sales_count AS spu_sales_count,
+                    spu.review_count AS spu_review_count,
+                    spu.status AS spu_status,
+                    spu.created_at AS spu_created_at,
+                    spu.updated_at AS spu_updated_at,
+                    spu.is_hot AS spu_is_hot,
+                    brands.name AS brand_name,
+                    categories.name AS category_name,
+                    AVG(sku.price) AS avg_price,
+                    SUM(sku.sales_count) AS total_sales  -- 获取总销量
+                FROM 
+                    spu
+                JOIN 
+                    brands ON spu.brand_id = brands.id
+                JOIN 
+                    categories ON spu.category_id = categories.id
+                JOIN 
+                    sku ON spu.id = sku.spu_id
+                GROUP BY 
+                    spu.id
+                ORDER BY 
+                    AVG(sku.price) ASC
+            ''')
+
+            products = [dict(row) for row in cursor.fetchall()]
+
+            return jsonify({
+                "code": 200,
+                "data": {"items": products},
+                "message": "Success"
+            }), 200
+
+    except sqlite3.Error as e:
+        app.logger.error(f"数据库错误: {str(e)}")
+        return jsonify({"code": 500, "message": "数据库操作失败"}), 500
+    except Exception as e:
+        app.logger.error(f"系统异常: {str(e)}")
+        return jsonify({"code": 500, "message": "服务器内部错误"}), 500
+
+
+
+@app.route('/api/products/by_sales', methods=['GET'])
+def get_products_by_sales():
+    try:
+        with sqlite3.connect(DATABASE) as conn:
+            conn.row_factory = sqlite3.Row  # 启用行转字典功能
+            cursor = conn.cursor()
+
+            # 查询SPU和SKU信息，并按销量排序，同时获取平均价格
+            cursor.execute('''
+                SELECT 
+                    spu.id AS spu_id,
+                    spu.name AS spu_name,
+                    spu.description AS spu_description,
+                    spu.main_image AS spu_main_image,
+                    spu.detail_images AS spu_detail_images,
+                    spu.sales_count AS spu_sales_count,
+                    spu.review_count AS spu_review_count,
+                    spu.status AS spu_status,
+                    spu.created_at AS spu_created_at,
+                    spu.updated_at AS spu_updated_at,
+                    spu.is_hot AS spu_is_hot,
+                    brands.name AS brand_name,
+                    categories.name AS category_name,
+                    SUM(sku.sales_count) AS total_sales,
+                    AVG(sku.price) AS avg_price  -- 获取平均价格
+                FROM 
+                    spu
+                JOIN 
+                    brands ON spu.brand_id = brands.id
+                JOIN 
+                    categories ON spu.category_id = categories.id
+                JOIN 
+                    sku ON spu.id = sku.spu_id
+                GROUP BY 
+                    spu.id
+                ORDER BY 
+                    SUM(sku.sales_count) DESC
+            ''')
+
+            products = [dict(row) for row in cursor.fetchall()]
+
+            return jsonify({
+                "code": 200,
+                "data": {"items": products},
+                "message": "Success"
+            }), 200
+
+    except sqlite3.Error as e:
+        app.logger.error(f"数据库错误: {str(e)}")
+        return jsonify({"code": 500, "message": "数据库操作失败"}), 500
+    except Exception as e:
+        app.logger.error(f"系统异常: {str(e)}")
+        return jsonify({"code": 500, "message": "服务器内部错误"}), 500
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#获取详细的sku信息
+@app.route('/api/skus/<int:spu_id>/<string:color>/<string:size>', methods=['GET'])
+def get_sku_by_attributes(spu_id, color, size):
+    try:
+        if not color or not size:
+            return jsonify({"code": 400, "message": "缺少颜色或尺寸参数"}), 400
+
+        with sqlite3.connect(DATABASE) as conn:
+            conn.row_factory = sqlite3.Row  # 启用行转字典功能
+            cursor = conn.cursor()
+
+            # 查询SKU信息
+            cursor.execute('''
+                SELECT * FROM sku 
+                WHERE spu_id = ? AND attributes LIKE ?
+            ''', (spu_id, f'%{{"attribute_id":1, "value":"{color}"}}%{{"attribute_id":2, "value":"{size}"}}%'))
+
+            sku = cursor.fetchone()
+            if not sku:
+                return jsonify({
+                    "code": 200,
+                    "data": None,
+                    "message": "没有该SKU"
+                }), 200
+
+            # 将image字段从JSON字符串转换为Python列表
+            sku_dict = dict(sku)
+            sku_dict['image'] = json.loads(sku_dict['image'])
+
+            return jsonify({
+                "code": 200,
+                "data": sku_dict,
+                "message": "Success"
+            }), 200
+
+    except sqlite3.Error as e:
+        app.logger.error(f"数据库错误: {str(e)}")
+        return jsonify({"code": 500, "message": "数据库操作失败"}), 500
+    except Exception as e:
+        app.logger.error(f"系统异常: {str(e)}")
+        return jsonify({"code": 500, "message": "服务器内部错误"}), 500
+
+
+
+
+
+#获取sku的详细信息
+@app.route('/api/sku/<int:sku_id>', methods=['GET'])
+def get_sku_details(sku_id):
+    try:
+        with sqlite3.connect(DATABASE) as conn:
+            conn.row_factory = sqlite3.Row  # 启用行转字典功能
+            cursor = conn.cursor()
+
+            # 查询 sku 表
+            cursor.execute('''
+                SELECT * FROM sku WHERE id = ?
+            ''', (sku_id,))
+            sku_data = cursor.fetchone()
+
+            if not sku_data:
+                return jsonify({"code": 404, "message": "SKU 不存在"}), 404
+
+            # 查询 spu 表
+            cursor.execute('''
+                SELECT spu.*, brands.name as brand_name, categories.name as category_name 
+                FROM spu 
+                JOIN brands ON spu.brand_id = brands.id
+                JOIN categories ON spu.category_id = categories.id
+                WHERE spu.id = ?
+            ''', (sku_data['spu_id'],))
+            spu_data = cursor.fetchone()
+
+            if not spu_data:
+                return jsonify({"code": 404, "message": "SPU 不存在"}), 404
+
+            # 组合 sku 和 spu 的信息
+            sku_info = dict(sku_data)
+            spu_info = dict(spu_data)
+
+            # 将 sku 和 spu 的信息合并
+            sku_info.update({
+                "spu": spu_info
+            })
+
+            return jsonify({
+                "code": 200,
+                "data": sku_info,
+                "message": "Success"
+            }), 200
+
+    except sqlite3.Error as e:
+        app.logger.error(f"数据库查询失败: {str(e)}")
+        return jsonify({
+            "code": 500,
+            "data": None,
+            "message": "数据库操作失败"
+        }), 500
+    except Exception as e:
+        app.logger.error(f"系统异常: {str(e)}")
+        return jsonify({
+            "code": 500,
+            "data": None,
+            "message": "服务器内部错误"
+        }), 500
+
+#1. 获
+
+
+
+
+@app.route('/api/products/<int:spu_id>/colors/<string:color>/images', methods=['GET'])
+def get_product_colors_with_images(spu_id, color):
+    try:
+        with sqlite3.connect(DATABASE) as conn:
+            conn.row_factory = sqlite3.Row  # 启用行转字典功能
+            cursor = conn.cursor()
+
+            # 获取SKU详细信息，只获取颜色属性
+            cursor.execute('''
+                SELECT attributes, image FROM sku WHERE spu_id = ?
+            ''', (spu_id,))
+            sku_list = cursor.fetchall()
+
+            # 提取颜色信息和图片
+            images = []
+            for sku in sku_list:
+                attributes = json.loads(sku['attributes'])  # 将JSON字符串转换为Python列表
+                for attribute in attributes:
+                    if attribute['attribute_id'] == 1 and attribute['value'] == color:  # 假设1是颜色的attribute_id
+                        sku_images = json.loads(sku['image'])
+                        images.extend(sku_images)
+
+            # 去重处理
+            unique_images = list(set(images))
+
+            return jsonify({
+                "code": 200,
+                "data": {
+                    "spu_id": spu_id,
+                    "color": color,
+                    "images": unique_images
+                },
+                "message": "Success"
+            })
+
+    except sqlite3.Error as e:
+        app.logger.error(f"数据库查询失败: {str(e)}")
+        return jsonify({"code": 500, "message": "数据库错误"}), 500
+    except Exception as e:
+        app.logger.error(f"系统异常: {str(e)}")
+        return jsonify({"code": 500, "message": "服务器内部错误"}), 500
+
+
+
+# 2. 获取点击颜色时的 sku 尺寸
+@app.route('/api/products/<int:spu_id>/sizes_by_color', methods=['GET'])
+def get_sizes_by_color(spu_id):
+    try:
+        color = request.args.get('color')
+        if not color:
+            return jsonify({"code": 400, "message": "缺少颜色参数"}), 400
+
+        with sqlite3.connect(DATABASE) as conn:
+            conn.row_factory = sqlite3.Row  # 启用行转字典功能
+            cursor = conn.cursor()
+
+            # 查询SKU信息，只获取尺寸属性
+            cursor.execute('''
+                SELECT attributes FROM sku 
+                WHERE spu_id = ? AND attributes LIKE ?
+            ''', (spu_id, f'%{{"attribute_id":1, "value":"{color}"}}%'))
+
+            sku_list = cursor.fetchall()
+
+            # 提取尺寸信息
+            sizes = set()
+            for sku in sku_list:
+                attributes = json.loads(sku['attributes'])
+                for attribute in attributes:
+                    if attribute['attribute_id'] == 2:  # 假设 attribute_id 为 2 表示尺寸
+                        sizes.add(attribute['value'])
+
+            return jsonify({
+                "code": 200,
+                "data": {"sizes": list(sizes)},
+                "message": "Success"
+            })
+
+    except sqlite3.Error as e:
+        app.logger.error(f"获取商品尺寸失败: {str(e)}")
+        return jsonify({"code": 500, "message": "数据库错误"}), 500
+    except Exception as e:
+        app.logger.error(f"系统异常: {str(e)}")
+        return jsonify({"code": 500, "message": "服务器内部错误"}), 500
+
+
+
+
+
+
+
+
+@app.route('/api/products/<int:spu_id>/specifications', methods=['GET'])
+def get_product_specifications(spu_id):
+    try:
+        with sqlite3.connect(DATABASE) as conn:
+            conn.row_factory = sqlite3.Row  # 启用行转字典功能
+            cursor = conn.cursor()
+
+            # 获取SKU详细信息，只获取规格属性
+            cursor.execute('''
+                SELECT attributes FROM sku WHERE spu_id = ?
+            ''', (spu_id,))
+            sku_list = cursor.fetchall()
+
+            # 提取规格信息
+            specifications = set()
+            for sku in sku_list:
+                attributes = json.loads(sku['attributes'])  # 将JSON字符串转换为Python列表
+                for attribute in attributes:
+                    if attribute['attribute_id'] == 5:  # 假设5是规格的attribute_id
+                        specifications.add(attribute['value'])
+
+            return jsonify({
+                "code": 200,
+                "data": {"specifications": list(specifications)},
+                "message": "Success"
+            })
+
+    except sqlite3.Error as e:
+        app.logger.error(f"获取商品规格失败: {str(e)}")
+        return jsonify({"code": 500, "message": "数据库错误"}), 500
+    except Exception as e:
+        app.logger.error(f"系统异常: {str(e)}")
+        return jsonify({"code": 500, "message": "服务器内部错误"}), 500
+
+
+@app.route('/api/orders/<int:user_id>/<int:order_id>/cancel', methods=['POST'])
+def cancel_order(user_id, order_id):
+    try:
+        with sqlite3.connect(DATABASE) as conn:
+            cursor = conn.cursor()
+
+            # 验证用户有效性
+            cursor.execute("SELECT id FROM users WHERE id = ?", (user_id,))
+            if not cursor.fetchone():
+                return jsonify({"code": 404, "message": "用户不存在"}), 404
+
+            # 验证订单归属
+            cursor.execute("SELECT id, status, total_amount FROM orders WHERE id = ? AND user_id = ?", (order_id, user_id))
+            order = cursor.fetchone()
+
+            if not order:
+                return jsonify({"code": 404, "message": "订单不存在或不属于您"}), 404
+
+            order_status = order[1]
+            total_amount = order[2]
+
+            # 验证订单状态是否为可取消的状态
+            if order_status not in [1, 2, 3]:  # 1-待付款, 2-已付款, 3-已发货
+                return jsonify({"code": 403, "message": "只有待付款、已付款或已发货的订单可以取消"}), 403
+
+            # 更新订单状态为已取消
+            cursor.execute("UPDATE orders SET status = 5 WHERE id = ?", (order_id,))
+
+            # 如果订单状态为已付款或已发货，恢复库存
+            if order_status in [2, 3]:
+                # 获取订单商品明细
+                cursor.execute("SELECT sku_id, quantity FROM order_items WHERE order_id = ?", (order_id,))
+                order_items = cursor.fetchall()
+
+                for item in order_items:
+                    sku_id = item[0]
+                    quantity = item[1]
+
+                    # 恢复库存
+                    cursor.execute("UPDATE sku SET stock = stock + ? WHERE id = ?", (quantity, sku_id))
+
+            conn.commit()
+
+            return jsonify({
+                "code": 200,
+                "message": "订单已取消"
+            }), 200
+
+    except sqlite3.Error as e:
+        conn.rollback()
+        app.logger.error(f"数据库错误: {str(e)}")
+        return jsonify({"code": 500, "message": "数据库操作失败"}), 500
+    except Exception as e:
+        conn.rollback()
+        app.logger.error(f"系统异常: {str(e)}")
+        return jsonify({"code": 500, "message": "服务器内部错误"}), 500
+
+
+
+
+
 
 if __name__ == '__main__':
     app.run(debug=True)
