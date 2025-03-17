@@ -1,4 +1,6 @@
 import csv
+import re
+
 import json
 import random
 from flask import Flask, session, request, jsonify, make_response
@@ -8,7 +10,6 @@ import  string
 import os
 from werkzeug.utils import secure_filename
 from apscheduler.schedulers.background import BackgroundScheduler
-
 
 
 
@@ -3489,20 +3490,6 @@ def create_order():
             if not cursor.fetchone():
                 return jsonify({"code": 404, "message": "用户不存在"}), 404
 
-            # 验证购物车项
-            cart_item_ids = [item['id'] for item in cart_items]
-            cursor.execute('''
-                SELECT c.id AS cart_id, c.sku_id, c.quantity, s.price
-                FROM cart c
-                JOIN sku s ON c.sku_id = s.id
-                WHERE c.id IN ({})
-                AND c.user_id = ?
-            '''.format(','.join('?' for _ in cart_item_ids)), cart_item_ids + [user_id])
-            fetched_cart_items = cursor.fetchall()
-
-            if len(fetched_cart_items) != len(cart_items):
-                return jsonify({"code": 400, "message": "购物车项无效"}), 400
-
             # 验证地址是否存在且属于该用户
             cursor.execute('''
                 SELECT id FROM user_address WHERE id = ? AND user_id = ?
@@ -3510,57 +3497,84 @@ def create_order():
             if not cursor.fetchone():
                 return jsonify({"code": 400, "message": "地址无效"}), 400
 
-            # 计算总金额
-            total_amount = sum(item[3] * item[2] for item in fetched_cart_items)
+            # 分组 cart_items 按 sku_id
+            sku_groups = {}
+            for item in cart_items:
+                sku_id = item['sku_id']
+                if sku_id not in sku_groups:
+                    sku_groups[sku_id] = []
+                sku_groups[sku_id].append(item)
 
-            # 生成订单号
-            order_no = datetime.now().strftime("%Y%m%d%H%M%S") + str(random.randint(1000, 9999))
+            order_details = []
 
-            # 创建订单主记录
-            cursor.execute('''
-                INSERT INTO orders 
-                (order_no, user_id, total_amount, status, created_at)
-                VALUES (?, ?, ?, 1, ?)
-            ''', (order_no, user_id, total_amount, datetime.now()))
-            order_id = cursor.lastrowid
-
-            # 插入订单商品明细
-            for item in fetched_cart_items:
-                sku_id = item[1]
-                quantity = item[2]
-                price = item[3]
-
+            for sku_id, items in sku_groups.items():
+                # 验证购物车项
+                cart_item_ids = [item['id'] for item in items]
                 cursor.execute('''
-                    INSERT INTO order_items 
-                    (order_id, sku_id, sku_name, sku_image, price, quantity)
-                    SELECT ?, s.id, spu.name, spu.main_image, ?, ?
-                    FROM sku s
-                    JOIN spu ON s.spu_id = spu.id
-                    WHERE s.id = ?
-                ''', (order_id, price, quantity, sku_id))
+                    SELECT c.id AS cart_id, c.sku_id, c.quantity, s.price
+                    FROM cart c
+                    JOIN sku s ON c.sku_id = s.id
+                    WHERE c.id IN ({})
+                    AND c.user_id = ?
+                '''.format(','.join('?' for _ in cart_item_ids)), cart_item_ids + [user_id])
+                fetched_cart_items = cursor.fetchall()
 
-            # 插入订单地址信息
-            cursor.execute('''
-                INSERT INTO order_address 
-                (order_id, user_id, address_id)
-                VALUES (?, ?, ?)
-            ''', (order_id, user_id, address_id))
+                if len(fetched_cart_items) != len(items):
+                    return jsonify({"code": 400, "message": "购物车项无效"}), 400
 
-            # 删除购物车中的商品
-            for cart_item in cart_items:
+                # 计算总金额
+                total_amount = sum(item[3] * item[2] for item in fetched_cart_items)
+
+                # 生成订单号
+                order_no = datetime.now().strftime("%Y%m%d%H%M%S") + str(random.randint(1000, 9999))
+
+                # 创建订单主记录
                 cursor.execute('''
-                    DELETE FROM cart WHERE id = ? AND user_id = ?
-                ''', (cart_item['id'], user_id))
+                    INSERT INTO orders 
+                    (order_no, user_id, total_amount, status, created_at)
+                    VALUES (?, ?, ?, 1, ?)
+                ''', (order_no, user_id, total_amount, datetime.now()))
+                order_id = cursor.lastrowid
+
+                # 插入订单商品明细
+                for item in fetched_cart_items:
+                    sku_id = item[1]
+                    quantity = item[2]
+                    price = item[3]
+
+                    cursor.execute('''
+                        INSERT INTO order_items 
+                        (order_id, sku_id, sku_name, sku_image, price, quantity)
+                        SELECT ?, s.id, spu.name, spu.main_image, ?, ?
+                        FROM sku s
+                        JOIN spu ON s.spu_id = spu.id
+                        WHERE s.id = ?
+                    ''', (order_id, price, quantity, sku_id))
+
+                # 插入订单地址信息
+                cursor.execute('''
+                    INSERT INTO order_address 
+                    (order_id, user_id, address_id)
+                    VALUES (?, ?, ?)
+                ''', (order_id, user_id, address_id))
+
+                # 删除购物车中的商品
+                for cart_item in items:
+                    cursor.execute('''
+                        DELETE FROM cart WHERE id = ? AND user_id = ?
+                    ''', (cart_item['id'], user_id))
+
+                order_details.append({
+                    "order_id": order_id,
+                    "order_no": order_no,
+                    "total_amount": total_amount
+                })
 
             conn.commit()
 
             return jsonify({
                 "code": 200,
-                "data": {
-                    "order_id": order_id,
-                    "order_no": order_no,
-                    "total_amount": total_amount
-                },
+                "data": order_details,
                 "message": "订单创建成功"
             })
 
@@ -3572,6 +3586,7 @@ def create_order():
         conn.rollback()
         app.logger.error(f"系统异常: {str(e)}")
         return jsonify({"code": 500, "message": "服务器内部错误"}), 500
+
 
 
 #直接生成订单
@@ -4626,6 +4641,69 @@ def cancel_order(user_id, order_id):
         return jsonify({"code": 500, "message": "服务器内部错误"}), 500
 
 
+@app.route('/api/products/search', methods=['GET'])
+def search_products():
+    keyword = request.args.get('keyword')
+
+    if not keyword:
+        return jsonify({
+            "code": 400,
+            "message": "请输入有效搜索关键词"
+        }), 400
+
+    # 关键词安全处理
+    keyword = re.sub(r'[%_]', ' ', keyword)
+    search_pattern = f'%{keyword}%'
+
+    try:
+        with sqlite3.connect(DATABASE) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+
+            # 查询商品列表
+            cursor.execute('''
+                SELECT 
+                    spu.id AS spu_id,
+                    spu.name AS spu_name,
+                    spu.description AS spu_description,
+                    spu.main_image AS spu_main_image,
+                    spu.detail_images AS spu_detail_images,
+                    brands.name AS brand_name,
+                    categories.name AS category_name
+                FROM spu
+                LEFT JOIN brands ON spu.brand_id = brands.id
+                LEFT JOIN categories ON spu.category_id = categories.id
+                WHERE 
+                    categories.name LIKE ? OR 
+                    brands.name LIKE ? OR 
+                    spu.description LIKE ?
+            ''', (search_pattern, search_pattern, search_pattern))
+            results = cursor.fetchall()
+
+            items = [dict(row) for row in results]
+
+            return jsonify({
+                "code": 200,
+                "data": {
+                    "items": items
+                },
+                "message": "Success"
+            })
+
+    except sqlite3.Error as e:
+        app.logger.error(f"数据库查询失败: {str(e)}")
+        return jsonify({
+            "code": 500,
+            "data": None,
+            "message": "数据库操作失败"
+        }), 500
+    except Exception as e:
+        app.logger.error(f"系统异常: {str(e)}")
+        return jsonify({
+            "code": 500,
+            "data": None,
+            "message": "服务器内部错误"
+        }), 500
 
 
 
